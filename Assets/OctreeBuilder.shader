@@ -50,7 +50,7 @@
                 pos.z = 1.0 - pos.z;
 #endif
                 pos *= _VCT_Scale.xxy;
-                pos += _VCT_Scale.zzz;
+                pos += _VCT_Scale.zzw;
 #ifdef ORIENTATION_2
                 pos = pos.yzx;
 #endif
@@ -59,12 +59,12 @@
 #endif
                 /* now xyz should be in octree coordinates, [0-1]^3 */
 
-                clip(pos);
-                clip(0.999999 - pos);
+                if (any((pos * (1.0 - pos)) <= 0.0))
+                    return fixed4(0, 0, 0, 0);
 
                 int index = OCTREE_ROOT;
                 int next_index;
-                for (uint i = 0; i < _VCT_TreeLevels; i++)
+                for (uint i = 0; i <= _VCT_TreeLevels; i++)
                 {
                     index += pos.x >= 0.5 ? 1 : 0;
                     index += pos.y >= 0.5 ? 2 : 0;

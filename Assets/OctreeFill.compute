@@ -1,0 +1,9 @@
+﻿#pragma kernel Fill
+
+RWStructuredBuffer<int> Octree;
+
+[numthreads(64,1,1)]
+void Fill(uint3 id : SV_DispatchThreadID)
+{
+    Octree[id.x] = 0;
+}

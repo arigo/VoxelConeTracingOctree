@@ -13,9 +13,11 @@ public class OctreeBuilder : MonoBehaviour
     public float gridPixelSizeLevel0;
     public int gridLevels;
     public int computeBufferSize;
+    public int maxComputeSteps;
     public Shader octreeBuilderShader;
+    public ComputeShader octreeFillShader;
 
-    public int[] _octree_dump;
+    //public int[] _octree_dump;
 
 
     Camera _shadowCam;
@@ -77,22 +79,28 @@ public class OctreeBuilder : MonoBehaviour
         Shader.SetGlobalInt("_VCT_GridResolution", gridResolution);*/
 
 
-        var initial_octree = new List<int>();
+        octree = new ComputeBuffer(computeBufferSize, 4, ComputeBufferType.Counter);
+        int fill_kernel = octreeFillShader.FindKernel("Fill");
+        int thread_group = (computeBufferSize + 63) / 64;
+        octreeFillShader.SetBuffer(fill_kernel, "Octree", octree);
+        octreeFillShader.Dispatch(fill_kernel, thread_group, 1, 1);
+
+        /*var initial_octree = new List<int>();
         for (int j = 0; j < OCTREE_ROOT + 8; j++)
             initial_octree.Add(0);
-        //MakeOctreeRecursively(initial_octree, OCTREE_ROOT, levels: 2);
-        octree = new ComputeBuffer(computeBufferSize, 4, ComputeBufferType.Counter);
-        octree.SetData(initial_octree);
+        MakeOctreeRecursively(initial_octree, OCTREE_ROOT, levels: 2);
+        octree.SetData(initial_octree);*/
 
         var target = GetTemporaryTarget();
         cam.targetTexture = target;
+        Graphics.SetRandomWriteTarget(1, octree);
 
         float global_scale = 0.5f / gridResolution;
         int tree_levels = (int)Mathf.Log(gridResolution, 2);
         int level = gridLevels - 1;
         int orientation_mask = 7;
 
-        int MAX_STEPS = 5;
+        int max_steps = maxComputeSteps;
 
         while (level >= 0)
         {
@@ -101,15 +109,16 @@ public class OctreeBuilder : MonoBehaviour
             cam.nearClipPlane = -half_size;
             cam.farClipPlane = half_size;
             /* in the shader: xyz *= _VCT_Scale.xxy;
-                              xyz += _VCT_Scale.zzz;
+                              xyz += _VCT_Scale.zzw;
                should turn the value (gridResolution/2, gridResolution/2, 1/2)
                to (1/2, 1/2, 1/2)
              */
-            Shader.SetGlobalVector("_VCT_Scale",
-                new Vector3(global_scale, global_scale * gridResolution,
-                            0.5f - gridResolution * 0.5f * global_scale));
+            Vector4 vct_scale = new Vector4(global_scale, global_scale * gridResolution,
+                            0.5f - gridResolution * 0.5f * global_scale,
+                            0.5f - gridResolution * 0.5f * global_scale);
+            //Debug.Log("vct_scale: " + vct_scale.x + " " + vct_scale.y + " " + vct_scale.z + " " + vct_scale.w);
+            Shader.SetGlobalVector("_VCT_Scale", vct_scale);
             Shader.SetGlobalInt("_VCT_TreeLevels", tree_levels);
-            Graphics.SetRandomWriteTarget(1, octree);
 
             var orig_rotation = cam.transform.rotation;
             var axis_y = cam.transform.up;
@@ -157,7 +166,7 @@ public class OctreeBuilder : MonoBehaviour
             octree.SetData(flag, 0, 0, 3);
 
 
-            if (--MAX_STEPS == 0)
+            if (--max_steps <= 0)
                 break;
         }
 
@@ -197,11 +206,10 @@ public class OctreeBuilder : MonoBehaviour
     {
         if (octree == null)
             return;
-        _octree_dump = new int[5000];
+        var _octree_dump = new int[computeBufferSize];
         octree.GetData(_octree_dump);
 
         Gizmos.matrix = directionalLight.transform.localToWorldMatrix;
-
 
         void DrawRec(int index, Vector3 center, float halfscale)
         {
@@ -217,6 +225,8 @@ public class OctreeBuilder : MonoBehaviour
                     if ((i & 4) == 0) delta.z = -delta.z;
                     DrawRec(_octree_dump[index + i], center + delta, quaterscale);
                 }
+                else
+                    Debug.Assert(_octree_dump[index + i] == 0, "back-link at " + (index + i));
             if (leaf)
             {
                 Gizmos.color = new Color(1, 0.7f, 0.7f);
@@ -230,5 +240,11 @@ public class OctreeBuilder : MonoBehaviour
         }
 
         DrawRec(OCTREE_ROOT, Vector3.zero, 0.5f * (1 << gridLevels) * gridPixelSizeLevel0 * gridResolution);
+
+        for (int i = 0; i < gridLevels; i++)
+        {
+            Gizmos.color = new Color(1f, 1f, 1f);
+            Gizmos.DrawWireCube(Vector3.zero, (1 << i) * gridPixelSizeLevel0 * gridResolution * Vector3.one);
+        }
     }
 }
