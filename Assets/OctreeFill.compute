@@ -1,9 +1,22 @@
 ﻿#pragma kernel Fill
 
 RWStructuredBuffer<int> Octree;
+/*Texture3D<float4> Bricks;
+RWStructuredBuffer<uint> BricksCB;*/
 
 [numthreads(64,1,1)]
 void Fill(uint3 id : SV_DispatchThreadID)
 {
     Octree[id.x] = 0;
 }
+
+/*[numthreads(3,3,3)]
+void ReadBrick(uint3 id : SV_DispatchThreadID)
+{
+    id = uint3(0, 0, 0);
+    float3 color0 = Bricks[id].rgb;
+    uint3 c0 = uint3(color0 * 255.9);
+
+    uint index = id.z + 3 * (id.x + 3 * 512 * id.y);
+    BricksCB[index] = (c0.r << 16) | (c0.g << 8) | c0.b;
+}*/

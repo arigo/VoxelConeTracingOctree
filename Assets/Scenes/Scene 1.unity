@@ -153,14 +153,14 @@ MonoBehaviour:
   cullingMask:
     serializedVersion: 2
     m_Bits: 4294967295
-  gridResolution: 16
-  gridPixelSizeLevel0: 0.125
-  gridLevels: 3
-  computeBufferSize: 100000
+  gridResolution: 8
+  gridPixelSizeLevel0: 0.5
+  gridLevels: 2
+  totalNodes: 400
   maxComputeSteps: 12
   octreeBuilderShader: {fileID: 4800000, guid: 5e476de58c69d71499977ecd8847d4ef, type: 3}
   octreeFillShader: {fileID: 7200000, guid: 4c7c32328fa514a4e8ca0d859c818e96, type: 3}
-  _octree_dump: 
+  _bricks_dump: 
 --- !u!4 &560581946
 Transform:
   m_ObjectHideFlags: 0

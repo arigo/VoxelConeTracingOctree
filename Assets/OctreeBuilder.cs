@@ -12,7 +12,7 @@ public class OctreeBuilder : MonoBehaviour
     public int gridResolution;
     public float gridPixelSizeLevel0;
     public int gridLevels;
-    public int computeBufferSize;
+    public int totalNodes;
     public int maxComputeSteps;
     public Shader octreeBuilderShader;
     public ComputeShader octreeFillShader;
@@ -26,8 +26,14 @@ public class OctreeBuilder : MonoBehaviour
 
     void OnDestroy()
     {
+        ReleaseAll();
+    }
+
+    void ReleaseAll()
+    {
         if (octree != null)
             octree.Release();
+        octree = null;
     }
 
 
@@ -55,11 +61,8 @@ public class OctreeBuilder : MonoBehaviour
 
     void BuildOctree()
     {
-        if (octree != null)
-        {
-            octree.Release();
-            octree = null;
-        }
+        ReleaseAll();
+
         var cam = FetchShadowCamera();
         var trackTransform = directionalLight.transform;
         cam.transform.SetPositionAndRotation(trackTransform.position, trackTransform.rotation);
@@ -79,11 +82,11 @@ public class OctreeBuilder : MonoBehaviour
         Shader.SetGlobalInt("_VCT_GridResolution", gridResolution);*/
 
 
-        octree = new ComputeBuffer(computeBufferSize, 4, ComputeBufferType.Counter);
+        octree = new ComputeBuffer(totalNodes * 8, 4, ComputeBufferType.Counter);
         int fill_kernel = octreeFillShader.FindKernel("Fill");
-        int thread_group = (computeBufferSize + 63) / 64;
         octreeFillShader.SetBuffer(fill_kernel, "Octree", octree);
-        octreeFillShader.Dispatch(fill_kernel, thread_group, 1, 1);
+        octreeFillShader.Dispatch(fill_kernel, (totalNodes * 8 + 63) / 64, 1, 1);
+        octree.SetCounterValue(2);
 
         /*var initial_octree = new List<int>();
         for (int j = 0; j < OCTREE_ROOT + 8; j++)
@@ -91,18 +94,32 @@ public class OctreeBuilder : MonoBehaviour
         MakeOctreeRecursively(initial_octree, OCTREE_ROOT, levels: 2);
         octree.SetData(initial_octree);*/
 
+        /* OK I have no clue, but 3D textures give me an error if I try with 'width > 2048' */
+        /*var desc = new RenderTextureDescriptor(3 * 512, 3 * ((totalNodes + 511) / 512), RenderTextureFormat.ARGB32, 0)
+        {
+            dimension = UnityEngine.Rendering.TextureDimension.Tex3D,
+            volumeDepth = 3,
+            enableRandomWrite = true,
+            useMipMap = false,
+            autoGenerateMips = false,
+        };
+        bricks = new RenderTexture(desc);
+        bricks.wrapMode = TextureWrapMode.Clamp;
+        bricks.filterMode = FilterMode.Bilinear;
+        bricks.Create();*/
+
         var target = GetTemporaryTarget();
         cam.targetTexture = target;
-        Graphics.SetRandomWriteTarget(1, octree);
+        Graphics.SetRandomWriteTarget(1, octree, preserveCounterValue: true);
 
-        float global_scale = 0.5f / gridResolution;
-        int tree_levels = (int)Mathf.Log(gridResolution, 2);
-        int level = gridLevels - 1;
+        float global_scale = 0.5f / (gridResolution * (1 << (gridLevels - 1)));
+        int tree_levels = (int)Mathf.Log(gridResolution, 2) + gridLevels - 1;
+        int level = 0;
         int orientation_mask = 7;
 
         int max_steps = maxComputeSteps;
 
-        while (level >= 0)
+        while (level < gridLevels)
         {
             float half_size = (1 << level) * gridResolution * gridPixelSizeLevel0 * 0.5f;
             cam.orthographicSize = half_size;
@@ -149,22 +166,19 @@ public class OctreeBuilder : MonoBehaviour
 
             var flag = new int[3];
             octree.GetData(flag, 0, 0, 3);
-            orientation_mask = 0;
-            orientation_mask |= flag[0] != 0 ? 1 : 0;
-            orientation_mask |= flag[1] != 0 ? 2 : 0;
-            orientation_mask |= flag[2] != 0 ? 4 : 0;
+            orientation_mask = flag[0] | flag[1] | flag[2];
             if (orientation_mask == 0)
             {
-                tree_levels += 1;
-                level -= 1;
-                global_scale *= 0.5f;
+                tree_levels -= 1;
+                level += 1;
+                global_scale *= 2f;
                 orientation_mask = 7;
             }
-            //_octree_dump = new int[592];
-            //octree.GetData(_octree_dump);
-            flag[0] = flag[1] = flag[2] = 0;
-            octree.SetData(flag, 0, 0, 3);
-
+            else
+            {
+                flag[0] = flag[1] = flag[2] = 0;
+                octree.SetData(flag, 0, 0, 3);
+            }
 
             if (--max_steps <= 0)
                 break;
@@ -202,17 +216,41 @@ public class OctreeBuilder : MonoBehaviour
         BuildOctree();
     }
 
-    void OnDrawGizmos()
+#if UNITY_EDITOR
+    struct _Gizmos
+    {
+        public Vector3 center;
+        public Color color;
+        public float size;
+        public bool solid;
+    }
+
+    void OnDrawGizmosSelected()
     {
         if (octree == null)
             return;
-        var _octree_dump = new int[computeBufferSize];
+        var _octree_dump = new int[totalNodes * 8];
         octree.GetData(_octree_dump);
 
-        Gizmos.matrix = directionalLight.transform.localToWorldMatrix;
+        /*var bricks_cb = new ComputeBuffer(totalNodes * 27, sizeof(int), ComputeBufferType.Default);
+        int read_brick_kernel = octreeFillShader.FindKernel("ReadBrick");
+        octreeFillShader.SetTexture(read_brick_kernel, "Bricks", bricks);
+        octreeFillShader.SetBuffer(read_brick_kernel, "BricksCB", bricks_cb);
+        octreeFillShader.Dispatch(read_brick_kernel, bricks.width / 3, bricks.height / 3, 1);
+        _bricks_dump = new uint[totalNodes * 27];
+        bricks_cb.GetData(_bricks_dump);
+        bricks_cb.Release();*/
+
+        var mat = directionalLight.transform.localToWorldMatrix;
+        Gizmos.matrix = mat;
+
+        var gizmos = new List<_Gizmos>();
+
 
         void DrawRec(int index, Vector3 center, float halfscale)
         {
+            Debug.Assert((index & 7) == 0, "unaligned index");
+
             float quaterscale = halfscale * 0.5f;
             bool leaf = true;
             for (int i = 0; i < 8; i++)
@@ -226,11 +264,39 @@ public class OctreeBuilder : MonoBehaviour
                     DrawRec(_octree_dump[index + i], center + delta, quaterscale);
                 }
                 else
-                    Debug.Assert(_octree_dump[index + i] == 0, "back-link at " + (index + i));
+                    Debug.Assert(_octree_dump[index + i] <= 0, "back-link at " + (index + i));
             if (leaf)
             {
-                Gizmos.color = new Color(1, 0.7f, 0.7f);
-                Gizmos.DrawWireCube(center, halfscale * 2 * Vector3.one);
+                gizmos.Add(new _Gizmos
+                {
+                    center = center,
+                    color = new Color(1, 0.7f, 0.7f),
+                    size = halfscale * 2,
+                    solid = false
+                });
+
+                for (int i = 0; i < 8; i++)
+                {
+                    int c0 = _octree_dump[index + i];
+                    Debug.Assert(c0 != -1);
+                    if (c0 < 0)
+                    {
+                        Color32 color = new Color32((byte)(c0 >> 16), (byte)(c0 >> 8), (byte)c0, 0xff);
+
+                        Vector3 delta = quaterscale * Vector3.one;
+                        if ((i & 1) == 0) delta.x = -delta.x;
+                        if ((i & 2) == 0) delta.y = -delta.y;
+                        if ((i & 4) == 0) delta.z = -delta.z;
+
+                        gizmos.Add(new _Gizmos
+                        {
+                            center = center + delta,
+                            color = color,
+                            size = halfscale * 0.4f,
+                            solid = true
+                        });
+                    }
+                }
             }
             else
             {
@@ -241,10 +307,29 @@ public class OctreeBuilder : MonoBehaviour
 
         DrawRec(OCTREE_ROOT, Vector3.zero, 0.5f * (1 << gridLevels) * gridPixelSizeLevel0 * gridResolution);
 
+        var camera_pos = UnityEditor.SceneView.lastActiveSceneView.camera.transform.position;
+
+        gizmos.Sort((g1, g2) =>
+        {
+            var d1 = Vector3.Distance(camera_pos, mat * g1.center);
+            var d2 = Vector3.Distance(camera_pos, mat * g2.center);
+            return d2.CompareTo(d1);
+        });
+
+        foreach (var g in gizmos)
+        {
+            Gizmos.color = g.color;
+            if (g.solid)
+                Gizmos.DrawCube(g.center, g.size * Vector3.one);
+            else
+                Gizmos.DrawWireCube(g.center, g.size * Vector3.one);
+        }
+
         for (int i = 0; i < gridLevels; i++)
         {
             Gizmos.color = new Color(1f, 1f, 1f);
             Gizmos.DrawWireCube(Vector3.zero, (1 << i) * gridPixelSizeLevel0 * gridResolution * Vector3.one);
         }
     }
+#endif
 }
